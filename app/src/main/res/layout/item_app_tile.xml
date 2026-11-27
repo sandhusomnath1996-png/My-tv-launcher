@@ -9,10 +9,10 @@
     android:orientation="vertical">
 
     <FrameLayout
-        android:id="@+id
+        android:id="@+id/tileContainer"
+        android
 
-/tileContainer"
-        android:layout_width="match_parent"
+:layout_width="match_parent"
         android:layout_height="96dp"
         android:background="@drawable/bg_tile_selector"
         android:padding="10dp">
