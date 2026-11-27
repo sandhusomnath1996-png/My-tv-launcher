@@ -155,7 +155,7 @@ class MainActivity : AppCompatActivity() {
             val pkg = ri.activityInfo.packageName
             if (pkg == packageName || appMap.containsKey(pkg)) continue
             val label = ri.loadLabel(pm).toString()
-            val banner = ri.activityInfo.loadBanner(pm) ?: ri.activityInfo.applicationInfo.load-Banner(pm)
+            val banner = ri.activityInfo.loadBanner(pm) ?: ri.activityInfo.applicationInfo.loadBanner(pm)
             val drawable = banner ?: ri.loadIcon(pm)
             appMap[pkg] = AppInfo(
                 label = label,
