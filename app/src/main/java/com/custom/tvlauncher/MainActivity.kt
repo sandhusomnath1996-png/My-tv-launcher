@@ -3,32 +3,53 @@ package com.custom.tvlauncher
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.content.SharedPreferences
 import android.content.pm.PackageManager
+import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.View
+import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class MainActivity : AppCompatActivity() {
 
+    private lateinit var rootLayout: LinearLayout
     private lateinit var tvRamInfo: TextView
+    private lateinit var tvClock: TextView
+    private lateinit var tvDate: TextView
     private lateinit var tvAppsHeader: TextView
     private lateinit var rvApps: RecyclerView
-    private var installedApps: List<AppInfo> = emptyList()
-    private val recentPackages = LinkedHashSet<String>()
-    private val ramHandler = Handler(Looper.getMainLooper())
+    private lateinit var prefs: SharedPreferences
 
-    private val ramUpdater = object : Runnable {
+    private var allInstalledApps: List<AppInfo> = emptyList()
+    private val recentPackages = LinkedHashSet<String>()
+    private val uiHandler = Handler(Looper.getMainLooper())
+
+    private val themeColors = listOf(
+        "Default Slate" to intArrayOf(Color.parseColor("#0F131A"), Color.parseColor("#1D2531")),
+        "Midnight Blue" to intArrayOf(Color.parseColor("#060D1F"), Color.parseColor("#122857")),
+        "AMOLED Black" to intArrayOf(Color.parseColor("#000000"), Color.parseColor("#090B10")),
+        "Deep Violet" to intArrayOf(Color.parseColor("#12091F"), Color.parseColor("#2B174A")),
+        "Forest Night" to intArrayOf(Color.parseColor("#071411"), Color.parseColor("#13312A"))
+    )
+
+    private val periodicUpdater = object : Runnable {
         override fun run() {
             updateRamDisplay()
-            ramHandler.postDelayed(this, 4000)
+            updateClockDisplay()
+            uiHandler.postDelayed(this, 4000)
         }
     }
 
@@ -36,22 +57,40 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        prefs = getSharedPreferences("tv_launcher_prefs", Context.MODE_PRIVATE)
+        rootLayout = findViewById(R.id.rootLayout)
         tvRamInfo = findViewById(R.id.tvRamInfo)
+        tvClock = findViewById(R.id.tvClock)
+        tvDate = findViewById(R.id.tvDate)
         tvAppsHeader = findViewById(R.id.tvAppsHeader)
         rvApps = findViewById(R.id.rvApps)
 
+        applySavedTheme()
         setupTopActions()
         loadInstalledApps()
     }
 
     override fun onResume() {
         super.onResume()
-        ramHandler.post(ramUpdater)
+        uiHandler.post(periodicUpdater)
     }
 
     override fun onPause() {
         super.onPause()
-        ramHandler.removeCallbacks(ramUpdater)
+        uiHandler.removeCallbacks(periodicUpdater)
+    }
+
+    private fun applySavedTheme() {
+        val idx = prefs.getInt("theme_index", 0).coerceIn(0, themeColors.lastIndex)
+        val colors = themeColors[idx].second
+        val gd = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors)
+        rootLayout.background = gd
+    }
+
+    private fun updateClockDisplay() {
+        val now = Date()
+        tvClock.text = SimpleDateFormat("hh:mm a", Locale.getDefault()).format(now)
+        tvDate.text = SimpleDateFormat("EEE, dd MMM", Locale.getDefault()).format(now)
     }
 
     private fun updateRamDisplay() {
@@ -65,42 +104,129 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupTopActions() {
+        findViewById<View>(R.id.btnWifi).setOnClickListener {
+            tryStartActivity(Intent(Settings.ACTION_WIFI_SETTINGS), "Wi-Fi settings unavailable")
+        }
+
         findViewById<View>(R.id.btnRecentApps).setOnClickListener {
             showRecentAppsDialog()
         }
 
         findViewById<View>(R.id.btnVoice).setOnClickListener {
-            val intent = Intent(Intent.ACTION_ASSIST)
-            tryStartActivity(intent, "Voice Assistant not available")
+            tryStartActivity(Intent(Intent.ACTION_ASSIST), "Voice Assistant not available")
         }
 
         findViewById<View>(R.id.btnInputs).setOnClickListener {
-            val intent = Intent("com.android.tv.action.INPUT_SETTINGS")
-            tryStartActivity(intent, "TV Inputs menu not supported on this device")
+            tryStartActivity(Intent("com.android.tv.action.INPUT_SETTINGS"), "TV Inputs menu not supported")
         }
 
         findViewById<View>(R.id.btnQuickMenu).setOnClickListener {
-            tryStartActivity(Intent(Settings.ACTION_DISPLAY_SETTINGS), "Quick Menu unavailable")
+            showThemePickerDialog()
         }
 
         findViewById<View>(R.id.btnSettings).setOnClickListener {
-            tryStartActivity(Intent(Settings.ACTION_SETTINGS), "Settings unavailable")
+            showLauncherSettingsDialog()
         }
+    }
+
+    private fun showLauncherSettingsDialog() {
+        val options = arrayOf(
+            "Change Wallpaper / Theme",
+            "Hidden Apps (Unhide)",
+            "System TV Settings"
+        )
+        AlertDialog.Builder(this)
+            .setTitle("Launcher Settings")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> showThemePickerDialog()
+                    1 -> showHiddenAppsDialog()
+                    2 -> tryStartActivity(Intent(Settings.ACTION_SETTINGS), "Settings unavailable")
+                }
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun showThemePickerDialog() {
+        val names = themeColors.map { it.first }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Select Wallpaper Theme")
+            .setItems(names) { _, which ->
+                prefs.edit().putInt("theme_index", which).apply()
+                applySavedTheme()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun showHiddenAppsDialog() {
+        val hiddenSet = prefs.getStringSet("hidden_apps", emptySet()) ?: emptySet()
+        val hiddenApps = allInstalledApps.filter { hiddenSet.contains(it.packageName) }
+        if (hiddenApps.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Hidden Apps")
+                .setMessage("Abhi koi app hidden nahi hai. Kisi app ko hide karne ke liye us par OK button dabaye rakhein (long press).")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+        val labels = hiddenApps.map { "${it.label} (Unhide)" }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Hidden Apps (${hiddenApps.size})")
+            .setItems(labels) { _, which ->
+                val pkg = hiddenApps[which].packageName
+                val newHidden = hiddenSet.toMutableSet()
+                newHidden.remove(pkg)
+                prefs.edit().putStringSet("hidden_apps", newHidden).apply()
+                refreshAppsGrid()
+            }
+            .setNegativeButton("Close", null)
+            .show()
+    }
+
+    private fun showAppOptionsDialog(app: AppInfo) {
+        val pinnedSet = prefs.getStringSet("pinned_apps", emptySet()) ?: emptySet()
+        val hiddenSet = prefs.getStringSet("hidden_apps", emptySet()) ?: emptySet()
+        val isPinned = pinnedSet.contains(app.packageName)
+
+        val items = arrayOf(
+            if (isPinned) "Unpin from Favorites" else "★ Pin to Top (Favorite)",
+            "Hide App from Home"
+        )
+        AlertDialog.Builder(this)
+            .setTitle(app.label)
+            .setItems(items) { _, which ->
+                when (which) {
+                    0 -> {
+                        val newPinned = pinnedSet.toMutableSet()
+                        if (isPinned) newPinned.remove(app.packageName) else newPinned.add(app.packageName)
+                        prefs.edit().putStringSet("pinned_apps", newPinned).apply()
+                        refreshAppsGrid()
+                    }
+                    1 -> {
+                        val newHidden = hiddenSet.toMutableSet()
+                        newHidden.add(app.packageName)
+                        prefs.edit().putStringSet("hidden_apps", newHidden).apply()
+                        refreshAppsGrid()
+                    }
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun showRecentAppsDialog() {
         val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val runningLabels = recentPackages.mapNotNull { pkg ->
-            installedApps.find { it.packageName == pkg }?.label ?: pkg
+            allInstalledApps.find { it.packageName == pkg }?.label ?: pkg
         }.toTypedArray()
 
         if (runningLabels.isEmpty()) {
             AlertDialog.Builder(this)
                 .setTitle("Recent Apps")
-                .setMessage("Abhi koi recent background app nahi hai. Aap sabhi background apps ko ek saath clear bhi kar sakte hain.")
-                .setPositiveButton("Clear All Background Apps") { _, _ ->
-                    clearAllBackgroundApps(am)
-                }
+                .setMessage("Abhi koi recent background app nahi hai.")
+                .setPositiveButton("Clear All Background Apps") { _, _ -> clearAllBackgroundApps(am) }
                 .setNegativeButton("Close", null)
                 .show()
             return
@@ -115,15 +241,13 @@ class MainActivity : AppCompatActivity() {
                 updateRamDisplay()
                 Toast.makeText(this, "Closed ${runningLabels[index]}", Toast.LENGTH_SHORT).show()
             }
-            .setPositiveButton("Clear All Apps") { _, _ ->
-                clearAllBackgroundApps(am)
-            }
+            .setPositiveButton("Clear All Apps") { _, _ -> clearAllBackgroundApps(am) }
             .setNegativeButton("Close", null)
             .show()
     }
 
     private fun clearAllBackgroundApps(am: ActivityManager) {
-        for (app in installedApps) {
+        for (app in allInstalledApps) {
             if (app.packageName != packageName) {
                 am.killBackgroundProcesses(app.packageName)
             }
@@ -165,20 +289,38 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        installedApps = appMap.values.toList()
-        tvAppsHeader.text = "Apps (${installedApps.size})"
-
+        allInstalledApps = appMap.values.toList()
         rvApps.layoutManager = GridLayoutManager(this, 5)
-        rvApps.adapter = AppAdapter(installedApps) { app ->
-            val launchIntent = pm.getLeanbackLaunchIntentForPackage(app.packageName)
-                ?: pm.getLaunchIntentForPackage(app.packageName)
-            if (launchIntent != null) {
-                recentPackages.add(app.packageName)
-                startActivity(launchIntent)
-            } else {
-                Toast.makeText(this, "Cannot open ${app.label}", Toast.LENGTH_SHORT).show()
-            }
-        }
+        refreshAppsGrid()
         rvApps.requestFocus()
+    }
+
+    private fun refreshAppsGrid() {
+        val pm = packageManager
+        val pinnedSet = prefs.getStringSet("pinned_apps", emptySet()) ?: emptySet()
+        val hiddenSet = prefs.getStringSet("hidden_apps", emptySet()) ?: emptySet()
+
+        val visible = allInstalledApps
+            .filter { !hiddenSet.contains(it.packageName) }
+            .map { it.copy(isPinned = pinnedSet.contains(it.packageName)) }
+            .sortedByDescending { it.isPinned }
+
+        tvAppsHeader.text = "Apps (${visible.size})"
+        rvApps.adapter = AppAdapter(
+            apps = visible,
+            onAppClick = { app ->
+                val launchIntent = pm.getLeanbackLaunchIntentForPackage(app.packageName)
+                    ?: pm.getLaunchIntentForPackage(app.packageName)
+                if (launchIntent != null) {
+                    recentPackages.add(app.packageName)
+                    startActivity(launchIntent)
+                } else {
+                    Toast.makeText(this, "Cannot open ${app.label}", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onAppLongClick = { app ->
+                showAppOptionsDialog(app)
+            }
+        )
     }
 }
