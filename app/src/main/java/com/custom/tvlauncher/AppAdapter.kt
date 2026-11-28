@@ -9,12 +9,14 @@ import androidx.recyclerview.widget.RecyclerView
 
 class AppAdapter(
     private val apps: List<AppInfo>,
-    private val onAppClick: (AppInfo) -> Unit
+    private val onAppClick: (AppInfo) -> Unit,
+    private val onAppLongClick: (AppInfo) -> Unit
 ) : RecyclerView.Adapter<AppAdapter.AppViewHolder>() {
 
     inner class AppViewHolder(view: View) : RecyclerView.ViewHolder(view) {
         val tileContainer: View = view.findViewById(R.id.tileContainer)
         val bannerImage: ImageView = view.findViewById(R.id.bannerImage)
+        val tvPinBadge: TextView = view.findViewById(R.id.tvPinBadge)
         val appLabel: TextView = view.findViewById(R.id.appLabel)
     }
 
@@ -32,6 +34,7 @@ class AppAdapter(
         } else {
             ImageView.ScaleType.FIT_CENTER
         }
+        holder.tvPinBadge.visibility = if (app.isPinned) View.VISIBLE else View.GONE
         holder.appLabel.text = app.label
 
         holder.itemView.setOnFocusChangeListener { v, hasFocus ->
@@ -44,6 +47,11 @@ class AppAdapter(
 
         holder.itemView.setOnClickListener {
             onAppClick(app)
+        }
+
+        holder.itemView.setOnLongClickListener {
+            onAppLongClick(app)
+            true
         }
     }
 
