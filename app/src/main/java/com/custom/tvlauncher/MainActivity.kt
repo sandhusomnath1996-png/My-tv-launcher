@@ -7,6 +7,7 @@ import android.content.SharedPreferences
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -72,6 +73,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        loadInstalledApps()
         uiHandler.post(periodicUpdater)
     }
 
@@ -83,8 +85,7 @@ class MainActivity : AppCompatActivity() {
     private fun applySavedTheme() {
         val idx = prefs.getInt("theme_index", 0).coerceIn(0, themeColors.lastIndex)
         val colors = themeColors[idx].second
-        val gd = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors)
-        rootLayout.background = gd
+        rootLayout.background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, colors)
     }
 
     private fun updateClockDisplay() {
@@ -107,34 +108,19 @@ class MainActivity : AppCompatActivity() {
         findViewById<View>(R.id.btnWifi).setOnClickListener {
             tryStartActivity(Intent(Settings.ACTION_WIFI_SETTINGS), "Wi-Fi settings unavailable")
         }
-
-        findViewById<View>(R.id.btnRecentApps).setOnClickListener {
-            showRecentAppsDialog()
-        }
-
+        findViewById<View>(R.id.btnRecentApps).setOnClickListener { showRecentAppsDialog() }
         findViewById<View>(R.id.btnVoice).setOnClickListener {
             tryStartActivity(Intent(Intent.ACTION_ASSIST), "Voice Assistant not available")
         }
-
         findViewById<View>(R.id.btnInputs).setOnClickListener {
             tryStartActivity(Intent("com.android.tv.action.INPUT_SETTINGS"), "TV Inputs menu not supported")
         }
-
-        findViewById<View>(R.id.btnQuickMenu).setOnClickListener {
-            showThemePickerDialog()
-        }
-
-        findViewById<View>(R.id.btnSettings).setOnClickListener {
-            showLauncherSettingsDialog()
-        }
+        findViewById<View>(R.id.btnQuickMenu).setOnClickListener { showThemePickerDialog() }
+        findViewById<View>(R.id.btnSettings).setOnClickListener { showLauncherSettingsDialog() }
     }
 
     private fun showLauncherSettingsDialog() {
-        val options = arrayOf(
-            "Change Wallpaper / Theme",
-            "Hidden Apps (Unhide)",
-            "System TV Settings"
-        )
+        val options = arrayOf("Change Wallpaper / Theme", "Hidden Apps (Unhide)", "System TV Settings")
         AlertDialog.Builder(this)
             .setTitle("Launcher Settings")
             .setItems(options) { _, which ->
@@ -166,7 +152,7 @@ class MainActivity : AppCompatActivity() {
         if (hiddenApps.isEmpty()) {
             AlertDialog.Builder(this)
                 .setTitle("Hidden Apps")
-                .setMessage("Abhi koi app hidden nahi hai. Kisi app ko hide karne ke liye us par OK button dabaye rakhein (long press).")
+                .setMessage("Abhi koi app hidden nahi hai. Kisi app par OK button dabaye rakhein (long press).")
                 .setPositiveButton("OK", null)
                 .show()
             return
@@ -185,6 +171,27 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun getOrderedPackages(): MutableList<String> {
+        val saved = prefs.getString("app_order", "") ?: ""
+        val orderList = if (saved.isBlank()) mutableListOf() else saved.split(",").toMutableList()
+        for (app in allInstalledApps) {
+            if (!orderList.contains(app.packageName)) orderList.add(app.packageName)
+        }
+        return orderList
+    }
+
+    private fun moveAppPosition(pkg: String, direction: Int) {
+        val orderList = getOrderedPackages()
+        val idx = orderList.indexOf(pkg)
+        val targetIdx = idx + direction
+        if (idx < 0 || targetIdx < 0 || targetIdx >= orderList.size) return
+        val temp = orderList[idx]
+        orderList[idx] = orderList[targetIdx]
+        orderList[targetIdx] = temp
+        prefs.edit().putString("app_order", orderList.joinToString(",")).apply()
+        refreshAppsGrid()
+    }
+
     private fun showAppOptionsDialog(app: AppInfo) {
         val pinnedSet = prefs.getStringSet("pinned_apps", emptySet()) ?: emptySet()
         val hiddenSet = prefs.getStringSet("hidden_apps", emptySet()) ?: emptySet()
@@ -192,7 +199,10 @@ class MainActivity : AppCompatActivity() {
 
         val items = arrayOf(
             if (isPinned) "Unpin from Favorites" else "★ Pin to Top (Favorite)",
-            "Hide App from Home"
+            "⬅ Move Left",
+            "➡ Move Right",
+            "Hide App from Home",
+            "Uninstall App"
         )
         AlertDialog.Builder(this)
             .setTitle(app.label)
@@ -204,11 +214,17 @@ class MainActivity : AppCompatActivity() {
                         prefs.edit().putStringSet("pinned_apps", newPinned).apply()
                         refreshAppsGrid()
                     }
-                    1 -> {
+                    1 -> moveAppPosition(app.packageName, -1)
+                    2 -> moveAppPosition(app.packageName, 1)
+                    3 -> {
                         val newHidden = hiddenSet.toMutableSet()
                         newHidden.add(app.packageName)
                         prefs.edit().putStringSet("hidden_apps", newHidden).apply()
                         refreshAppsGrid()
+                    }
+                    4 -> {
+                        val uninstallIntent = Intent(Intent.ACTION_DELETE, Uri.parse("package:${app.packageName}"))
+                        tryStartActivity(uninstallIntent, "Cannot uninstall ${app.label}")
                     }
                 }
             }
@@ -299,11 +315,12 @@ class MainActivity : AppCompatActivity() {
         val pm = packageManager
         val pinnedSet = prefs.getStringSet("pinned_apps", emptySet()) ?: emptySet()
         val hiddenSet = prefs.getStringSet("hidden_apps", emptySet()) ?: emptySet()
+        val orderList = getOrderedPackages()
 
         val visible = allInstalledApps
             .filter { !hiddenSet.contains(it.packageName) }
             .map { it.copy(isPinned = pinnedSet.contains(it.packageName)) }
-            .sortedByDescending { it.isPinned }
+            .sortedWith(compareByDescending<AppInfo> { it.isPinned }.thenBy { orderList.indexOf(it.packageName) })
 
         tvAppsHeader.text = "Apps (${visible.size})"
         rvApps.adapter = AppAdapter(
